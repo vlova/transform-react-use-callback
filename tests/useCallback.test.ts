@@ -7,7 +7,7 @@ const reactTypes = fs.readFileSync('node_modules/@types/react/index.d.ts');
 
 describe('useCallback', () => {
     const testCasesBasePath = 'tests/useCallbackTestCases';
-    const testCases = fs.readdirSync(testCasesBasePath);
+    const testCases = fs.readdirSync(testCasesBasePath); // TODO: order cases
     for (const testCaseName of testCases) {
         const inputTSX = fs.readFileSync(`${testCasesBasePath}/${testCaseName}/input.tsx`).toString();
         const expectedOutputTSX = fs.readFileSync(`${testCasesBasePath}/${testCaseName}/output.tsx`).toString();

@@ -12,6 +12,7 @@ interface CallbackRefs {
     outsideRefs: ts.Expression[];
 }
 
+// TODO: should be a flags enum
 enum RefType {
     InsideCallback,
     InsideComponent,
