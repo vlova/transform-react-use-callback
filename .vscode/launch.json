@@ -3,22 +3,36 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Node Inspector",
             "type": "node",
             "request": "launch",
+            "name": "Mocha All",
+            "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
             "args": [
-                "${workspaceRoot}/debug.ts"
-            ],
-            "runtimeArgs": [
-                "-r",
+                "--no-timeouts",
+                "--colors",
+                "tests/**/*.test.ts",
+                "--require",
                 "ts-node/register"
             ],
-            "cwd": "${workspaceRoot}",
-            "protocol": "inspector",
-            "internalConsoleOptions": "openOnSessionStart",
-            "env": {
-                "TS_NODE_IGNORE": "false"
-            }
+            "console": "integratedTerminal",
+            "sourceMaps": true,
+            "internalConsoleOptions": "neverOpen"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Mocha Current File",
+            "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
+            "args": [
+                "--no-timeouts",
+                "--colors",
+                "${file}",
+                "--require",
+                "ts-node/register"
+            ],
+            "console": "integratedTerminal",
+            "sourceMaps": true,
+            "internalConsoleOptions": "neverOpen"
         }
     ]
 }

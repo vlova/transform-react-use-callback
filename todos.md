@@ -1,0 +1,1 @@
+Just think to add into launch.json ability to run specific testCase in debug mode

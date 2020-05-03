@@ -138,6 +138,8 @@ type CallbackDescription = {
 // TODO: it should ensure that React is imported
 // TODO: it should put React.useCallback out of rendering
 // TODO: it shouldn't rewrite to useCallback when callback depends on variable defined in if/for/map
+// TODO: it should correctly rewrite useCallback when it's defined in if/for (i.e. should hoist)
+// TODO: should order refs in alpha order for tests
 function visitReactSFCComponent(componentNode: ts.ArrowFunction, typeChecker: ts.TypeChecker, ctx: ts.TransformationContext): ts.Node {
     function generateUseCallback(functionNode: ts.ArrowFunction, refs: CallbackRefs): ts.Node {
         const body = functionNode;
@@ -237,6 +239,7 @@ export function useCallbackTranformer(program: ts.Program) {
             if (!file.fileName.endsWith('.tsx')) {
                 return file;
             }
+
             return ts.visitNode(file, makeFindAndUpdateReactSFCComponents(ctx, file));
         }
     }
