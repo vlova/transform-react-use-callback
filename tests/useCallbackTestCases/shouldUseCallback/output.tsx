@@ -6,7 +6,7 @@ export const MyCounter = (p: { multiplier: number }) => {
     return (
         <div>
             <span style={{ color: 'red' }}>{counter}</span>
-            <button onClick={React.useCallback(() => setCounter(c => c + 1), [setCounter])}>+</button>
+            <button onClick={React.useCallback(() => setCounter(counter + 1), [setCounter, counter])}>+</button>
         </div>
     )
 };

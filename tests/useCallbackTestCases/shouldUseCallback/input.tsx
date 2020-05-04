@@ -6,7 +6,7 @@ export const MyCounter = (p: { multiplier: number }) => {
     return (
         <div>
             <span style={{ color: 'red' }}>{counter}</span>
-            <button onClick={() => setCounter(c => c + 1)}>+</button>
+            <button onClick={() => setCounter(counter + 1)}>+</button>
         </div>
     )
 };
