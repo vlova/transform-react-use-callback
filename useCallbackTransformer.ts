@@ -52,13 +52,7 @@ function gatherCallbackRefs(typeChecker: ts.TypeChecker, functionNode: ts.ArrowF
             // This is required for supporting a.b - i.e. property access
             case ts.SyntaxKind.PropertyAccessExpression: {
                 assert(ts.isPropertyAccessExpression(node));
-                const propertyNameRefType = getRefTypeOfExpression(node.name);
-                const expressionRef = getRefTypeOfExpression(node.expression);
-                if (propertyNameRefType === expressionRef) {
-                    return propertyNameRefType;
-                } else {
-                    return RefType.NotARef;
-                }
+                return getRefTypeOfExpression(node.expression);
             }
 
             // This is required for supporting (a as any).b - i.e. cast
