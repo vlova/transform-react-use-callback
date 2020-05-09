@@ -1,4 +1,5 @@
 {
     "mochaExplorer.files": "tests/**/*.test.ts",
-    "mochaExplorer.require": "ts-node/register"
+    "mochaExplorer.require": "ts-node/register",
+    "mochaExplorer.debuggerConfig": "Mocha Attach"
 }
