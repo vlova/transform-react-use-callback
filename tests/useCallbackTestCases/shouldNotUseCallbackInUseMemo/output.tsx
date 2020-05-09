@@ -6,7 +6,7 @@ export const MyCounter = () => {
     return (
         <div>
             <span style={{ color: 'red' }}>{counter}</span>
-            <button onClick={() => setCounter(c => c + 1)}>+</button>
+            <button onClick={React.useMemo(() => () => setCounter(counter + 1), [setCounter, counter])}>+</button>
         </div>
     )
 };

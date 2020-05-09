@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-export const MyCounter = (p: { multiplier: number }) => {
+export const MyCounter = () => {
     const [counter, setCounter] = React.useState(0);
 
     return (

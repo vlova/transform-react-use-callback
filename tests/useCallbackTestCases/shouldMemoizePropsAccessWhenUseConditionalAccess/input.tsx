@@ -1,12 +1,12 @@
 import * as React from 'react';
 
-export const MyCounter = () => {
+export const MyCounter = (p?: { adder: number }) => {
     const [counter, setCounter] = React.useState(0);
 
     return (
         <div>
             <span style={{ color: 'red' }}>{counter}</span>
-            <button onClick={() => setCounter(c => c + 1)}>+</button>
+            <button onClick={() => setCounter(counter + p?.adder)}>+</button>
         </div>
     )
-};
+}
