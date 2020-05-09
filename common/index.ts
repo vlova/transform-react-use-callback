@@ -1,2 +1,2 @@
-export * from './inlineFile';
 export * from './isReactSFCComponent';
+export * from './isNodeContainedIn';

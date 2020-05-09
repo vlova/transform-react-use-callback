@@ -1,7 +1,6 @@
 import * as ts from 'typescript';
 import { assert } from 'ts-essentials';
-import { isReactSFCComponent } from './common';
-import { isNodeContainedIn } from './common/isNodeContainedIn';
+import { isNodeContainedIn, isReactSFCComponent } from './common';
 
 // TODO: support normal functions (not arrow only)
 // TODO: We should also reject cases like `class MyComponent { render = () => <></> }` - i.e. when function is located inside of class
