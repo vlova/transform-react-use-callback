@@ -1,9 +1,8 @@
 import { expect } from 'chai';
-import { transformFile } from "ts-transformer-testing-library";
 import { useCallbackTranformer } from '../useCallbackTransformer';
 import * as fs from 'fs';
+import { transformAndPrettyPrint } from './common';
 
-const reactTypes = fs.readFileSync('node_modules/@types/react/index.d.ts');
 
 describe('useCallback', () => {
     const testCasesBasePath = 'tests/useCallbackTestCases';
@@ -21,31 +20,15 @@ describe('useCallback', () => {
 });
 
 function compileWithoutTranforms(expectedOutputTSX: string) {
-    return transformFile({
-        path: '/index.tsx',
-        contents: expectedOutputTSX
-    }, {
-        transforms: [],
-        mocks: [
-            {
-                name: 'react',
-                content: reactTypes.toString()
-            }
-        ]
-    });
+    return transformAndPrettyPrint(
+        expectedOutputTSX,
+        []
+    );
 }
 
 function compileWithUseCallbackTransform(inputTSX: string) {
-    return transformFile({
-        path: '/index.tsx',
-        contents: inputTSX
-    }, {
-        transforms: [useCallbackTranformer],
-        mocks: [
-            {
-                name: 'react',
-                content: reactTypes.toString()
-            }
-        ]
-    });
+    return transformAndPrettyPrint(
+        inputTSX,
+        [useCallbackTranformer]
+    );
 }
