@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { useCallbackTranformer } from '../useCallbackTransformer';
+import { useCallbackTranformer } from '../src/useCallbackTransformer';
 import * as fs from 'fs';
 import { transformAndPrettyPrint } from './common';
 
