@@ -25,7 +25,7 @@ export function gatherCallbackDependencies(
             case ts.SyntaxKind.Identifier: {
                 assert(ts.isIdentifier(node));
 
-                const declaration = typeChecker.getSymbolAtLocation(node).valueDeclaration;
+                const declaration = typeChecker.getSymbolAtLocation(node)?.valueDeclaration!;
 
                 if (isNodeContainedIn(declaration, functionNode)) {
                     return DependencyType.InsideCallback;

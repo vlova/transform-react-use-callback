@@ -4,7 +4,8 @@
     "target": "es5",
     "module": "commonjs",
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true  /* Disallow inconsistently-cased references to the same file. */
+    "forceConsistentCasingInFileNames": true,
+    "strict": true
   },
   "exclude": [
     "test/useCallbackTestCases/**.tsx"

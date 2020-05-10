@@ -13,7 +13,7 @@ export function transformAndPrettyPrint(
 
     const program = project.createProgram();
     const transformationResult = ts.transform(
-        program.getSourceFile('/index.tsx'),
+        program.getSourceFile('/index.tsx')!,
         makeTransformerFactories.map(make => make(program)),
         compilerOptions);
 
