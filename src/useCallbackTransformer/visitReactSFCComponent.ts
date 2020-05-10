@@ -1,6 +1,7 @@
 import * as ts from 'typescript';
 import { assert } from 'ts-essentials';
 import { CallbackDependencies, gatherCallbackDependencies } from './gatherCallbackDependencies';
+import { getFullyQualifiedName } from '../common/getFullyQualifiedName';
 
 // TODO: support normal functions (not arrow only)
 type CallbackDescription = {
@@ -8,6 +9,11 @@ type CallbackDescription = {
     replacement: ts.Node,
     dependencies: CallbackDependencies
 }
+
+const denyWrappingIfDefinedIn = new Set([
+    "React.useCallback",
+    "React.useMemo",
+]);
 
 // TODO: it should ensure that React is imported
 // TODO: it should put React.useCallback out of rendering
@@ -19,12 +25,25 @@ export function visitReactSFCComponent(
     typeChecker: ts.TypeChecker,
     ctx: ts.TransformationContext
 ): ts.Node {
-
     function gatherCallbacks(componentNode: ts.ArrowFunction): CallbackDescription[] {
         const callbacks: CallbackDescription[] = [];
 
         function visitor(node: ts.Node) {
             switch (node.kind) {
+                // TODO: okay, but what if callback it's defined in variable & then used inside of React.useCallback?
+                // This is hard question especially because variable can be used twicely: one time without useCallback, second time with
+                case ts.SyntaxKind.CallExpression: {
+                    assert(ts.isCallExpression(node));
+                    const symbol = typeChecker.getSymbolAtLocation(node.expression);
+                    const symbolName = getFullyQualifiedName(symbol);
+                    if (symbolName != null && denyWrappingIfDefinedIn.has(symbolName)) {
+                        break;
+                    }
+
+                    ts.forEachChild(node, visitor);
+                    break;
+                }
+
                 case ts.SyntaxKind.ArrowFunction: {
                     assert(ts.isArrowFunction(node));
                     const dependencies = gatherCallbackDependencies(typeChecker, node, componentNode);
