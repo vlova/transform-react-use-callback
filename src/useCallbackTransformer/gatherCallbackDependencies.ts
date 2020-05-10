@@ -1,6 +1,7 @@
 import * as ts from 'typescript';
 import { assert } from 'ts-essentials';
 import { isNodeContainedIn } from '../common';
+import { ReactComponentNode } from './types';
 
 
 export type CallbackDependencies = ts.Expression[];
@@ -15,8 +16,8 @@ export enum DependencyType {
 
 export function gatherCallbackDependencies(
     typeChecker: ts.TypeChecker,
-    functionNode: ts.ArrowFunction,
-    componentNode: ts.ArrowFunction
+    functionNode: ts.ArrowFunction | ts.FunctionExpression,
+    componentNode: ReactComponentNode
 ): CallbackDependencies {
     const dependencies: CallbackDependencies = [];
 

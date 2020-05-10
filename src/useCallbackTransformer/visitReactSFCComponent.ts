@@ -2,10 +2,11 @@ import * as ts from 'typescript';
 import { assert } from 'ts-essentials';
 import { CallbackDependencies, gatherCallbackDependencies } from './gatherCallbackDependencies';
 import { getFullyQualifiedName } from '../common/getFullyQualifiedName';
+import { ReactComponentNode } from './types';
 
 // TODO: support normal functions (not arrow only)
 type CallbackDescription = {
-    function: ts.ArrowFunction,
+    function: ts.ArrowFunction | ts.FunctionExpression,
     replacement: ts.Node,
     dependencies: CallbackDependencies
 }
@@ -21,11 +22,11 @@ const denyWrappingIfDefinedIn = new Set([
 // TODO: it should correctly rewrite useCallback when it's defined in if/for (i.e. should hoist)
 // TODO: should order refs in alpha order for tests
 export function visitReactSFCComponent(
-    componentNode: ts.ArrowFunction,
+    componentNode: ReactComponentNode,
     typeChecker: ts.TypeChecker,
     ctx: ts.TransformationContext
 ): ts.Node {
-    function gatherCallbacks(componentNode: ts.ArrowFunction): CallbackDescription[] {
+    function gatherCallbacks(componentNode: ReactComponentNode): CallbackDescription[] {
         const callbacks: CallbackDescription[] = [];
 
         function visitor(node: ts.Node) {
@@ -44,8 +45,9 @@ export function visitReactSFCComponent(
                     break;
                 }
 
+                case ts.SyntaxKind.FunctionExpression:
                 case ts.SyntaxKind.ArrowFunction: {
-                    assert(ts.isArrowFunction(node));
+                    assert(ts.isArrowFunction(node) || ts.isFunctionExpression(node));
                     const dependencies = gatherCallbackDependencies(typeChecker, node, componentNode);
                     callbacks.push({
                         function: node,
@@ -54,6 +56,7 @@ export function visitReactSFCComponent(
                     });
                     break;
                 }
+
                 default: {
                     ts.forEachChild(node, visitor);
                     break;
@@ -66,7 +69,7 @@ export function visitReactSFCComponent(
         return callbacks;
     }
 
-    function replaceCallbacks(componentNode: ts.ArrowFunction): ts.Node {
+    function replaceCallbacks(componentNode: ReactComponentNode): ts.Node {
         const callbacks = gatherCallbacks(componentNode);
         if (callbacks.length === 0) {
             return componentNode;
@@ -87,7 +90,7 @@ export function visitReactSFCComponent(
     return replaceCallbacks(componentNode);
 }
 
-function generateUseCallback(functionNode: ts.ArrowFunction, refs: CallbackDependencies): ts.Node {
+function generateUseCallback(functionNode: ts.ArrowFunction | ts.FunctionExpression, refs: CallbackDependencies): ts.Node {
     const body = functionNode;
     const identifiers = refs;
 

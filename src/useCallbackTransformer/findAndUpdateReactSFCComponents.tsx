@@ -9,8 +9,13 @@ import { visitReactSFCComponent } from './visitReactSFCComponent';
 export function findAndUpdateReactSFCComponents(file: ts.SourceFile, ctx: ts.TransformationContext, program: ts.Program) {
     const visitor: ts.Visitor = node => {
         switch (node.kind) {
+            case ts.SyntaxKind.FunctionDeclaration:
+            case ts.SyntaxKind.FunctionExpression:
             case ts.SyntaxKind.ArrowFunction: {
-                assert(ts.isArrowFunction(node));
+                assert(
+                    ts.isArrowFunction(node) ||
+                    ts.isFunctionExpression(node) ||
+                    ts.isFunctionDeclaration(node));
 
                 const typeChecker = program.getTypeChecker();
                 const signature = typeChecker.getSignatureFromDeclaration(node);
