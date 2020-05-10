@@ -5,28 +5,24 @@ import { isNodeContainedIn, isReactSFCComponent } from './common';
 // TODO: support normal functions (not arrow only)
 // TODO: We should also reject cases like `class MyComponent { render = () => <></> }` - i.e. when function is located inside of class
 
-interface CallbackRefs {
-    insideCallbackRefs: ts.Expression[];
-    insideComponentRefs: ts.Expression[];
-    outsideRefs: ts.Expression[];
+type CallbackDependencies = ts.Expression[];
+
+enum DependencyType {
+    InsideCallback = 'InsideCallback',
+    InsideComponent = 'InsideComponent',
+    OutsideOfComponent = 'OutsideOfComponent',
+    Constant = 'Constant',
+    NotRef = 'NotRef'
 }
 
-// TODO: should be a flags enum
-enum RefType {
-    InsideCallback,
-    InsideComponent,
-    OutsideRef,
-    NotARef
-}
+function gatherCallbackDependencies(
+    typeChecker: ts.TypeChecker,
+    functionNode: ts.ArrowFunction,
+    componentNode: ts.ArrowFunction
+): CallbackDependencies {
+    const dependencies: CallbackDependencies = [];
 
-function gatherCallbackRefs(typeChecker: ts.TypeChecker, functionNode: ts.ArrowFunction, componentNode: ts.ArrowFunction): CallbackRefs {
-    const context: CallbackRefs = {
-        insideComponentRefs: [],
-        insideCallbackRefs: [],
-        outsideRefs: []
-    };
-
-    function getRefTypeOfExpression(node: ts.Node): RefType {
+    function getDependencyType(node: ts.Node): DependencyType {
         switch (node.kind) {
             case ts.SyntaxKind.Identifier: {
                 assert(ts.isIdentifier(node));
@@ -34,99 +30,134 @@ function gatherCallbackRefs(typeChecker: ts.TypeChecker, functionNode: ts.ArrowF
                 const declaration = typeChecker.getSymbolAtLocation(node)?.valueDeclaration!;
 
                 if (isNodeContainedIn(declaration, functionNode)) {
-                    return RefType.InsideCallback;
+                    return DependencyType.InsideCallback;
                 } else if (isNodeContainedIn(declaration, componentNode)) {
-                    return RefType.InsideComponent;
+                    return DependencyType.InsideComponent;
                 } else {
-                    return RefType.OutsideRef;
+                    return DependencyType.OutsideOfComponent;
                 }
             }
 
             // This is required for supporting cases like (a.b).c - i.e. when you have parens inside of simple expression
             case ts.SyntaxKind.ParenthesizedExpression: {
                 assert(ts.isParenthesizedExpression(node));
-                return getRefTypeOfExpression(node.expression);
+                return getDependencyType(node.expression);
             }
 
             // This is required for supporting a.b - i.e. property access
             case ts.SyntaxKind.PropertyAccessExpression: {
                 assert(ts.isPropertyAccessExpression(node));
-                return getRefTypeOfExpression(node.expression);
+                return getDependencyType(node.expression);
             }
 
             // This is required for supporting (a as any).b - i.e. cast
-            case ts.SyntaxKind.AsExpression:
-            // This is required for supporting a[0] or a['key'] - i.e. array/dictionary access
-            case ts.SyntaxKind.ElementAccessExpression:
+            case ts.SyntaxKind.AsExpression: {
+                assert(ts.isAsExpression(node));
+                return getDependencyType(node.expression);
+            }
+
             // This is required for supporting a!.b - i.e. non-null assertion
-            case ts.SyntaxKind.NonNullExpression:
-                {
-                    throw new Error('not implemented exception');
-                }
+            case ts.SyntaxKind.NonNullExpression: {
+                assert(ts.isNonNullExpression(node));
+                return getDependencyType(node.expression);
+            }
+
+            // This is required for supporting numbers like 1 and strings like '1' or "1"
+            case ts.SyntaxKind.NumericLiteral:
+            case ts.SyntaxKind.StringLiteral: {
+                return DependencyType.Constant;
+            }
+
+            // This is required for supporting template strings like `key`
+            case ts.SyntaxKind.NoSubstitutionTemplateLiteral: {
+                assert(ts.isNoSubstitutionTemplateLiteral(node));
+                return DependencyType.Constant;
+            }
+
+            // This is required for supporting template strings like `key${var}`
+            case ts.SyntaxKind.TemplateExpression: {
+                assert(ts.isTemplateExpression(node));
+                return [node.head, ...node.templateSpans]
+                    .map(getDependencyType)
+                    .reduce(combineDependencyTypes);
+            }
+
+            // This is required for supporting template strings like `key${var}`
+            case ts.SyntaxKind.TemplateHead:
+            case ts.SyntaxKind.TemplateMiddle:
+            case ts.SyntaxKind.TemplateTail: {
+                return DependencyType.Constant;
+            }
+
+            // This is required for supporting template strings like `key${var}`
+            case ts.SyntaxKind.TemplateExpression: {
+                assert(ts.isTemplateExpression(node));
+                return node.templateSpans
+                    .map(getDependencyType)
+                    .reduce(combineDependencyTypes);
+            }
+
+            // This is required for supporting template strings like `key${var}`
+            case ts.SyntaxKind.TemplateSpan: {
+                assert(ts.isTemplateSpan(node));
+                return getDependencyType(node.expression);
+            }
+
+            // This is required for supporting a[0] or a['key'] - i.e. array/dictionary access
+            case ts.SyntaxKind.ElementAccessExpression: {
+                assert(ts.isElementAccessExpression(node));
+                const mainExpressionType = getDependencyType(node.expression);
+                const argumentExpressionType = getDependencyType(node.argumentExpression);
+                return combineDependencyTypes(mainExpressionType, argumentExpressionType);
+            }
 
             // TODO: check if there are more suitable cases
             // TODO: what about map.get()? is there a way to optimize it?
 
             default: {
-                return RefType.NotARef;
+                return DependencyType.NotRef;
             }
         }
     }
 
+    function combineDependencyTypes(leftRefType: DependencyType, rightRefType: DependencyType): DependencyType {
+        const refPriority = [
+            DependencyType.Constant,
+            DependencyType.OutsideOfComponent,
+            DependencyType.InsideComponent,
+            DependencyType.InsideCallback,
+            DependencyType.NotRef
+        ]
+
+        const leftIndex = refPriority.findIndex(r => r === leftRefType);
+        const rightIndex = refPriority.findIndex(r => r === rightRefType);
+
+        assert(leftIndex !== -1);
+        assert(rightIndex !== -1);
+
+        return (leftIndex > rightIndex)
+            ? leftRefType
+            : rightRefType;
+    }
+
     function visitor(node: ts.Node): void {
-        switch (node.kind) {
-            // TODO: it's possible that all of this logic can be collapsed without conditions
-            case ts.SyntaxKind.ElementAccessExpression:
-            case ts.SyntaxKind.ParenthesizedExpression:
-            case ts.SyntaxKind.PropertyAccessExpression: {
-                const refType = getRefTypeOfExpression(node);
-                if (refType !== RefType.NotARef) {
-                    addRef({ refType, node: node as ts.Expression });
-                } else {
-                    ts.forEachChild(node, visitor);
-                }
-
-                break;
-            }
-
-            case ts.SyntaxKind.Identifier: {
-                assert(ts.isIdentifier(node));
-                const refType = getRefTypeOfExpression(node);
-                addRef({ refType, node });
-
-                break;
-            }
-
-            default:
-                ts.forEachChild(node, visitor);
-                break;
+        const refType = getDependencyType(node);
+        if (refType === DependencyType.InsideComponent) {
+            dependencies.push(node as ts.Expression);
+        } else if (refType === DependencyType.NotRef) {
+            ts.forEachChild(node, visitor);
         }
     }
 
     ts.forEachChild(functionNode, visitor);
 
-    return context;
-
-    function addRef({ refType, node }: { refType: RefType; node: ts.Expression; }) {
-        // TODO: did me hear about switch?
-        if (refType == RefType.InsideCallback) {
-            context.insideCallbackRefs.push(node);
-        }
-        else if (refType == RefType.InsideComponent) {
-            context.insideComponentRefs.push(node);
-        }
-        else if (refType === RefType.OutsideRef) {
-            context.outsideRefs.push(node);
-        } else if (refType === RefType.NotARef) {
-            // nothing
-        }
-    }
+    return dependencies;
 }
 
 type CallbackDescription = {
     function: ts.ArrowFunction,
     replacement: ts.Node,
-    refs: CallbackRefs
+    dependencies: CallbackDependencies
 }
 
 // TODO: it should ensure that React is imported
@@ -135,9 +166,9 @@ type CallbackDescription = {
 // TODO: it should correctly rewrite useCallback when it's defined in if/for (i.e. should hoist)
 // TODO: should order refs in alpha order for tests
 function visitReactSFCComponent(componentNode: ts.ArrowFunction, typeChecker: ts.TypeChecker, ctx: ts.TransformationContext): ts.Node {
-    function generateUseCallback(functionNode: ts.ArrowFunction, refs: CallbackRefs): ts.Node {
+    function generateUseCallback(functionNode: ts.ArrowFunction, refs: CallbackDependencies): ts.Node {
         const body = functionNode;
-        const identifiers = refs.insideComponentRefs;
+        const identifiers = refs;
 
         return ts.createCall(
             ts.createPropertyAccess(
@@ -162,11 +193,11 @@ function visitReactSFCComponent(componentNode: ts.ArrowFunction, typeChecker: ts
             switch (node.kind) {
                 case ts.SyntaxKind.ArrowFunction: {
                     assert(ts.isArrowFunction(node));
-                    const refs = gatherCallbackRefs(typeChecker, node, componentNode);
+                    const refs = gatherCallbackDependencies(typeChecker, node, componentNode);
                     callbacks.push({
                         function: node,
                         replacement: generateUseCallback(node, refs),
-                        refs
+                        dependencies: refs
                     });
                     break;
                 }
@@ -187,7 +218,7 @@ function visitReactSFCComponent(componentNode: ts.ArrowFunction, typeChecker: ts
             switch (node.kind) {
                 case ts.SyntaxKind.ArrowFunction: {
                     assert(ts.isArrowFunction(node));
-                    const refs = gatherCallbackRefs(typeChecker, node, componentNode);
+                    const refs = gatherCallbackDependencies(typeChecker, node, componentNode);
                     const replacement = generateUseCallback(node, refs);
                     return replacement;
                 }
