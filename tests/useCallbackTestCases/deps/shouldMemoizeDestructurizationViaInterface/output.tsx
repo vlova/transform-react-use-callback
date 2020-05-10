@@ -10,7 +10,7 @@ export const MyCounter = ({ adder }: Props) => {
     return (
         <div>
             <span style={{ color: 'red' }}>{counter}</span>
-            <button onClick={React.useCallback(() => setCounter(counter + adder), [setCounter, counter, adder])}>+</button>
+            <button onClick={React.useCallback(() => setCounter(counter + adder), [adder, counter, setCounter])}>+</button>
         </div>
     )
 };

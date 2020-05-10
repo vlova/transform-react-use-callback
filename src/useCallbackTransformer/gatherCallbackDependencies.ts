@@ -2,7 +2,7 @@ import * as ts from 'typescript';
 import { assert } from 'ts-essentials';
 import { isNodeContainedIn } from '../common';
 import { ReactComponentNode } from './types';
-
+import { orderBy } from 'lodash';
 
 export type CallbackDependencies = ts.Expression[];
 
@@ -134,7 +134,9 @@ export function gatherCallbackDependencies(
 
     ts.forEachChild(functionNode, visitor);
 
-    return dependencies;
+    // TODO: think if we can make ordering which increases performance of useCallback
+    //       (i.e. reduces amount of comparisons when change happens)
+    return orderBy(dependencies, [d => d.getText()], ['asc']);
 }
 
 
