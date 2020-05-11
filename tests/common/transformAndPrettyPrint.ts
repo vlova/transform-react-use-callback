@@ -21,22 +21,28 @@ export function transformAndPrettyPrint(
         .printFile(transformationResult.transformed[0]);
 }
 
+let cachedProject: Project | null = null;
 function makeProject(compilerOptions: ts.CompilerOptions, tsxContent: string) {
-    const project = new Project({
+    const project = cachedProject ?? new Project({
         useInMemoryFileSystem: true,
         compilerOptions: compilerOptions as any,
         skipFileDependencyResolution: true,
         skipLoadingLibFiles: true
     });
 
-    project.createSourceFile('/index.tsx', tsxContent);
+    if (cachedProject == null) {
+        project.createSourceFile('/index.tsx', tsxContent);
 
-    project.createSourceFile('/node_modules/react/index.ts', getReactTypes());
-    project.fileSystem.writeFileSync(
-        '/node_modules/react/package.json',
-        JSON.stringify({ name: 'react', main: "./src/index.ts" })
-    );
+        project.createSourceFile('/node_modules/react/index.ts', getReactTypes());
+        project.fileSystem.writeFileSync(
+            '/node_modules/react/package.json',
+            JSON.stringify({ name: 'react', main: "./src/index.ts" })
+        );
+    } else {
+        project.updateSourceFile('/index.tsx', tsxContent);
+    }
 
+    cachedProject = project;
     return project;
 }
 

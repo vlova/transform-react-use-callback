@@ -16,6 +16,7 @@ describe('useCallback', () => {
                 const inputTSX = fs.readFileSync(`${testCasesBasePath}/${testCaseName}/input.tsx`);
                 const outputTSX = fs.readFileSync(`${testCasesBasePath}/${testCaseName}/output.tsx`);
                 it(testCaseName, () => {
+                    // TODO: Just think to replace prettyPrint with manual string cleanup if that can save a time
                     const expectedOutputTSX = transformAndPrettyPrint(outputTSX.toString(), []);
                     const actualOutputTSX = transformAndPrettyPrint(inputTSX.toString(), [useCallbackTranformer]);
                     expect(actualOutputTSX).equal(expectedOutputTSX);
