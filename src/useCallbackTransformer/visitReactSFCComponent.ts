@@ -16,6 +16,11 @@ const denyWrappingIfDefinedIn = new Set([
     "React.useMemo",
 ]);
 
+type ComponentTransformationResult = {
+    componentNode: ReactComponentNode,
+    variablesToHoistOutOfComponent: ts.VariableStatement[]
+}
+
 // TODO: it should ensure that React is imported
 // TODO: it should put React.useCallback out of rendering
 // TODO: it shouldn't rewrite to useCallback when callback depends on variable defined in if/for/map
@@ -25,7 +30,7 @@ export function visitReactSFCComponent(
     componentNode: ReactComponentNode,
     typeChecker: ts.TypeChecker,
     ctx: ts.TransformationContext
-): ts.Node {
+): ComponentTransformationResult {
     function gatherCallbacks(componentNode: ReactComponentNode): CallbackDescription[] {
         const callbacks: CallbackDescription[] = [];
 
@@ -70,13 +75,28 @@ export function visitReactSFCComponent(
         return callbacks;
     }
 
-    function replaceCallbacks(componentNode: ReactComponentNode): ts.Node {
+    function replaceCallbacks(componentNode: ReactComponentNode): ComponentTransformationResult {
         const callbacks = gatherCallbacks(componentNode);
         if (callbacks.length === 0) {
-            return componentNode;
+            return {
+                componentNode,
+                variablesToHoistOutOfComponent: []
+            }
         }
 
-        const inlineReplacementMap = new Map(callbacks.map(c => [c.function as any, c.replacement]));
+        const inlineReplacementMap = new Map(
+            callbacks
+                .filter(c => c.dependencies.length > 0)
+                .map(c => [c.function as any, c.replacement]));
+
+        const hoistOutOfComponentLevel = getVariablesToHoistOutOfComponentLevel(callbacks);
+
+        for (const toHoist of hoistOutOfComponentLevel) {
+            // TODO: consider using ctx.hoistVariableDeclaration + ctx.addInitializationStatement
+            // when ctx.addInitializationStatement will be available for using
+            inlineReplacementMap.set(toHoist.functionNode, toHoist.variableIdentifier);
+        }
+
         // TODO(perf): consider visiting on such parts of tree that contains replacement nodes
         function visitor(node: ts.Node): ts.VisitResult<ts.Node> {
             if (inlineReplacementMap.has(node)) {
@@ -86,7 +106,11 @@ export function visitReactSFCComponent(
             return ts.visitEachChild(node, visitor, ctx);
         }
 
-        return ts.visitEachChild(componentNode, visitor, ctx);
+        const newComponentNode = ts.visitEachChild(componentNode, visitor, ctx);
+        return {
+            componentNode: newComponentNode,
+            variablesToHoistOutOfComponent: hoistOutOfComponentLevel.map(h => h.variableStatement)
+        };
     }
 
     return replaceCallbacks(componentNode);
@@ -110,4 +134,19 @@ function generateUseCallback(functionNode: ts.ArrowFunction | ts.FunctionExpress
             )
         ]
     );
+}
+
+function getVariablesToHoistOutOfComponentLevel(callbacks: CallbackDescription[]) {
+    return callbacks
+        .filter(c => c.dependencies.length === 0)
+        .map(s => {
+            const variableIdentifier = ts.createUniqueName("$myHoistedCallback");
+            return {
+                functionNode: s.function as ts.Node,
+                variableIdentifier,
+                variableStatement: ts.createVariableStatement(undefined, ts.createVariableDeclarationList([
+                    ts.createVariableDeclaration(variableIdentifier, undefined, s.function)
+                ], ts.NodeFlags.Const))
+            };
+        });
 }
