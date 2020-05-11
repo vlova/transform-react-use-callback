@@ -24,7 +24,9 @@ export function transformAndPrettyPrint(
 function makeProject(compilerOptions: ts.CompilerOptions, tsxContent: string) {
     const project = new Project({
         useInMemoryFileSystem: true,
-        compilerOptions: compilerOptions as any
+        compilerOptions: compilerOptions as any,
+        skipFileDependencyResolution: true,
+        skipLoadingLibFiles: true
     });
 
     project.createSourceFile('/index.tsx', tsxContent);
@@ -45,12 +47,12 @@ function getCompilerOptions(): ts.CompilerOptions {
         module: ts.ModuleKind.ESNext,
         moduleResolution: ts.ModuleResolutionKind.NodeJs,
         suppressImplicitAnyIndexErrors: true,
-        resolveJsonModule: true,
+        resolveJsonModule: false,
         skipLibCheck: true,
         target: ts.ScriptTarget.ESNext,
         types: [],
         noEmitOnError: true,
-        jsx: ts.JsxEmit.Preserve
+        jsx: ts.JsxEmit.React
     };
 }
 
