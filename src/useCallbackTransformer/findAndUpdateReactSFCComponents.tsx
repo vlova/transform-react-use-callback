@@ -9,8 +9,10 @@ import { getFullyQualifiedName } from '../common/getFullyQualifiedName';
 
 export function findAndUpdateReactSFCComponents(file: ts.SourceFile, ctx: ts.TransformationContext, program: ts.Program) {
     const visitor: ts.Visitor = node => {
+        // TODO(perf): prevent digging into nodes that can't contain React component
         switch (node.kind) {
             case ts.SyntaxKind.ClassDeclaration: {
+                // TODO(perf): consider to short return here always as defining component in class is bullshit
                 assert(ts.isClassDeclaration(node));
                 const typeChecker = program.getTypeChecker();
                 const type = typeChecker.getTypeAtLocation(node);
@@ -34,10 +36,12 @@ export function findAndUpdateReactSFCComponents(file: ts.SourceFile, ctx: ts.Tra
                 const signature = typeChecker.getSignatureFromDeclaration(node);
                 if (signature != null && isReactSFCComponent(typeChecker, signature)) {
                     node = visitReactSFCComponent(node, typeChecker, ctx);
+                    // TODO(perf): consider to short return here, as nested react components are bullshit
                 }
 
                 return ts.visitEachChild(node, visitor, ctx);
             }
+
             default:
                 return ts.visitEachChild(node, visitor, ctx);
         }

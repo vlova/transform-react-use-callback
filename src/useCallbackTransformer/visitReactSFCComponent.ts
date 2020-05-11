@@ -29,6 +29,7 @@ export function visitReactSFCComponent(
     function gatherCallbacks(componentNode: ReactComponentNode): CallbackDescription[] {
         const callbacks: CallbackDescription[] = [];
 
+        // TODO(perf): prevent digging into nodes that can't contain callback
         function visitor(node: ts.Node) {
             switch (node.kind) {
                 // TODO: okay, but what if callback it's defined in variable & then used inside of React.useCallback?
@@ -76,6 +77,7 @@ export function visitReactSFCComponent(
         }
 
         const inlineReplacementMap = new Map(callbacks.map(c => [c.function as any, c.replacement]));
+        // TODO(perf): consider visiting on such parts of tree that contains replacement nodes
         function visitor(node: ts.Node): ts.VisitResult<ts.Node> {
             if (inlineReplacementMap.has(node)) {
                 return inlineReplacementMap.get(node);

@@ -21,6 +21,7 @@ export function gatherCallbackDependencies(
 ): CallbackDependencies {
     const dependencies: CallbackDependencies = [];
 
+    // TODO(perf): consider to short return when DependencyType allows that
     function getDependencyType(node: ts.Node): DependencyType {
         switch (node.kind) {
             case ts.SyntaxKind.Identifier: {
