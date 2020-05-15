@@ -1,10 +1,10 @@
 import * as ts from 'typescript';
 import { assert } from 'ts-essentials';
 import { isNodeContainedIn } from '../common';
-import { ReactComponentNode } from './types';
+import { ReactComponentNode, ReactCallbackNode } from './types';
 import { orderBy } from 'lodash';
 
-export type CallbackDependencies = ts.Expression[];
+export type ReactCallbackDependencies = ts.Expression[];
 
 export enum DependencyType {
     InsideCallback = 'InsideCallback',
@@ -16,10 +16,10 @@ export enum DependencyType {
 
 export function gatherCallbackDependencies(
     typeChecker: ts.TypeChecker,
-    functionNode: ts.ArrowFunction | ts.FunctionExpression,
+    functionNode: ReactCallbackNode,
     componentNode: ReactComponentNode
-): CallbackDependencies {
-    const dependencies: CallbackDependencies = [];
+): ReactCallbackDependencies {
+    const dependencies: ReactCallbackDependencies = [];
 
     // TODO(perf): consider to short return when DependencyType allows that
     function getDependencyType(node: ts.Node): DependencyType {
@@ -124,16 +124,38 @@ export function gatherCallbackDependencies(
         }
     }
 
-    function visitor(node: ts.Node): void {
+    function visit(node: ts.Node): void {
         const refType = getDependencyType(node);
         if (refType === DependencyType.InsideComponent) {
             dependencies.push(node as ts.Expression);
-        } else if (refType === DependencyType.NotRef) {
-            ts.forEachChild(node, visitor);
+            return;
+        }
+
+        if (refType === DependencyType.NotRef) {
+            switch (node.kind) {
+                // This is required to prevent thinking about function names as dependencies only because of declaration
+                // i.e. if we have `function log() { console.log('hi'); }`, we don't want `log` to be dependency
+                // We want it to be dependency only if it's used in other callback (like `() => log()`)
+                case ts.SyntaxKind.FunctionExpression:
+                case ts.SyntaxKind.FunctionDeclaration: {
+                    assert(ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node));
+
+                    node.getChildren()
+                        .filter(c => c !== node.name)
+                        .forEach(visit);
+
+                    return;
+                }
+
+                default: {
+                    ts.forEachChild(node, visit);
+                    return;
+                }
+            }
         }
     }
 
-    ts.forEachChild(functionNode, visitor);
+    visit(functionNode);
 
     // TODO: think if we can make ordering which increases performance of useCallback
     //       (i.e. reduces amount of comparisons when change happens)

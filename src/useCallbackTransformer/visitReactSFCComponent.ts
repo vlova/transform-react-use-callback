@@ -1,14 +1,14 @@
 import * as ts from 'typescript';
 import { assert } from 'ts-essentials';
-import { CallbackDependencies, gatherCallbackDependencies } from './gatherCallbackDependencies';
+import { ReactCallbackDependencies, gatherCallbackDependencies } from './gatherCallbackDependencies';
 import { getFullyQualifiedName } from '../common/getFullyQualifiedName';
-import { ReactComponentNode } from './types';
+import { ReactComponentNode, ReactCallbackNode } from './types';
+import { getSymbolReferencesInFile } from '../common';
 
-// TODO: support normal functions (not arrow only)
-type CallbackDescription = {
-    function: ts.ArrowFunction | ts.FunctionExpression,
+type ReactCallbackDescription = {
+    callback: ReactCallbackNode,
     replacement: ts.Node,
-    dependencies: CallbackDependencies
+    dependencies: ReactCallbackDependencies
 }
 
 const denyWrappingIfDefinedIn = new Set([
@@ -31,8 +31,8 @@ export function visitReactSFCComponent(
     typeChecker: ts.TypeChecker,
     ctx: ts.TransformationContext
 ): ComponentTransformationResult {
-    function gatherCallbacks(componentNode: ReactComponentNode): CallbackDescription[] {
-        const callbacks: CallbackDescription[] = [];
+    function gatherCallbacks(componentNode: ReactComponentNode): ReactCallbackDescription[] {
+        const callbacks: ReactCallbackDescription[] = [];
 
         // TODO(perf): prevent digging into nodes that can't contain callback
         function visitor(node: ts.Node) {
@@ -51,13 +51,18 @@ export function visitReactSFCComponent(
                     break;
                 }
 
+                case ts.SyntaxKind.FunctionDeclaration:
                 case ts.SyntaxKind.FunctionExpression:
                 case ts.SyntaxKind.ArrowFunction: {
-                    assert(ts.isArrowFunction(node) || ts.isFunctionExpression(node));
+                    assert(
+                        ts.isArrowFunction(node) ||
+                        ts.isFunctionExpression(node) ||
+                        ts.isFunctionDeclaration(node)
+                    );
                     const dependencies = gatherCallbackDependencies(typeChecker, node, componentNode);
                     callbacks.push({
-                        function: node,
-                        replacement: generateUseCallback(node, dependencies),
+                        callback: node,
+                        replacement: generateReactUseCallback(node, dependencies),
                         dependencies
                     });
                     break;
@@ -84,20 +89,29 @@ export function visitReactSFCComponent(
             }
         }
 
-        const inlineReplacementMap = new Map(
+        const inlineReplacementMap = new Map<ts.Node, ts.Node | undefined>(
             callbacks
                 .filter(c => c.dependencies.length > 0)
-                .map(c => [c.function as any, c.replacement]));
+                .map(c => [c.callback, c.replacement]));
 
-        const hoistOutOfComponentLevel = getVariablesToHoistOutOfComponentLevel(callbacks);
+        const hoistOutOfComponentLevel = getCallbacksToHoistOutOfComponent(callbacks, typeChecker, componentNode);
 
         for (const toHoist of hoistOutOfComponentLevel) {
             // TODO: consider using ctx.hoistVariableDeclaration + ctx.addInitializationStatement
             // when ctx.addInitializationStatement will be available for using
-            inlineReplacementMap.set(toHoist.functionNode, toHoist.variableIdentifier);
+
+            if (toHoist.type === 'hoistFunctionDeclaration') {
+                inlineReplacementMap.set(toHoist.callbackNode, undefined);
+
+                for (const reference of toHoist.references) {
+                    inlineReplacementMap.set(reference, toHoist.newVariableIdentifier);
+                }
+            } else {
+                inlineReplacementMap.set(toHoist.callbackNode, toHoist.newVariableIdentifier);
+            }
         }
 
-        // TODO(perf): consider visiting on such parts of tree that contains replacement nodes
+        // TODO(perf): consider visiting only such parts of tree that contains replacement nodes
         function visitor(node: ts.Node): ts.VisitResult<ts.Node> {
             if (inlineReplacementMap.has(node)) {
                 return inlineReplacementMap.get(node);
@@ -116,37 +130,121 @@ export function visitReactSFCComponent(
     return replaceCallbacks(componentNode);
 }
 
-function generateUseCallback(functionNode: ts.ArrowFunction | ts.FunctionExpression, refs: CallbackDependencies): ts.Node {
-    const body = functionNode;
-    const identifiers = refs;
-
-    return ts.createCall(
+function generateReactUseCallback(
+    functionNode: ReactCallbackNode,
+    deps: ReactCallbackDependencies
+): ts.Node {
+    const callbackWithUseCallback = ts.createCall(
         ts.createPropertyAccess(
             ts.createIdentifier("React"),
             ts.createIdentifier("useCallback")
         ),
         undefined,
         [
-            body,
+            callbackToExpression(functionNode),
             ts.createArrayLiteral(
-                identifiers,
+                deps,
                 false
             )
         ]
     );
+
+    if (ts.isFunctionDeclaration(functionNode)) {
+        assert(functionNode.name != null);
+
+        return ts.createVariableStatement(
+            undefined,
+            ts.createVariableDeclarationList(
+                [ts.createVariableDeclaration(
+                    functionNode.name!,
+                    undefined,
+                    callbackWithUseCallback
+                )],
+                ts.NodeFlags.Const
+            )
+        );
+    }
+
+    return callbackWithUseCallback;
 }
 
-function getVariablesToHoistOutOfComponentLevel(callbacks: CallbackDescription[]) {
+function callbackToExpression(functionNode: ReactCallbackNode): ts.Expression {
+    if (ts.isFunctionDeclaration(functionNode)) {
+        assert(functionNode.body != null);
+
+        return ts.createFunctionExpression(
+            functionNode.modifiers,
+            functionNode.asteriskToken,
+            functionNode.name,
+            functionNode.typeParameters,
+            functionNode.parameters,
+            functionNode.type,
+            functionNode.body
+        );
+    }
+
+    return functionNode;
+}
+
+type ReactCallbackHoistDirective
+    = {
+        type: 'hoistFunctionExpression',
+        callbackNode: ReactCallbackNode,
+        newVariableIdentifier: ts.Identifier,
+        variableStatement: ts.VariableStatement
+    } | {
+        type: 'hoistFunctionDeclaration',
+        callbackNode: ts.FunctionDeclaration,
+        newVariableIdentifier: ts.Identifier,
+        references: ts.Identifier[],
+        variableStatement: ts.VariableStatement
+    };
+
+function getCallbacksToHoistOutOfComponent(
+    callbacks: ReactCallbackDescription[],
+    typeChecker: ts.TypeChecker,
+    componentNode: ReactComponentNode
+): ReactCallbackHoistDirective[] {
     return callbacks
         .filter(c => c.dependencies.length === 0)
-        .map(s => {
-            const variableIdentifier = ts.createUniqueName("$myHoistedCallback");
-            return {
-                functionNode: s.function as ts.Node,
-                variableIdentifier,
-                variableStatement: ts.createVariableStatement(undefined, ts.createVariableDeclarationList([
-                    ts.createVariableDeclaration(variableIdentifier, undefined, s.function)
-                ], ts.NodeFlags.Const))
-            };
+        .map(callback => convertCallbackToHoistDirective(callback, typeChecker, componentNode));
+}
+
+function convertCallbackToHoistDirective(
+    callback: ReactCallbackDescription,
+    typeChecker: ts.TypeChecker,
+    componentNode: ReactComponentNode
+): ReactCallbackHoistDirective {
+    const newVariableIdentifier = ts.createUniqueName("$myHoistedCallback");
+    const variableStatement = ts.createVariableStatement(undefined,
+        ts.createVariableDeclarationList([
+            ts.createVariableDeclaration(newVariableIdentifier, undefined,
+                callbackToExpression(callback.callback))
+        ], ts.NodeFlags.Const));
+
+    if (ts.isFunctionDeclaration(callback.callback)) {
+        // Well, I suppose that it's impossible to have function declaration (not function expression) without name
+        assert(callback.callback.name != null);
+
+        const references = getSymbolReferencesInFile({
+            identifierToFind: callback.callback.name,
+            container: componentNode,
+            typeChecker: typeChecker
         });
+
+        return {
+            type: 'hoistFunctionDeclaration',
+            callbackNode: callback.callback,
+            newVariableIdentifier,
+            variableStatement: variableStatement,
+            references
+        }
+    } else {
+        return {
+            type: 'hoistFunctionExpression',
+            callbackNode: callback.callback,
+            newVariableIdentifier,
+            variableStatement: variableStatement
+        };
+    }
 }

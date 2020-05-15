@@ -23,5 +23,6 @@ export function getFullyQualifiedName(symbol: ts.Symbol | undefined) {
 }
 
 function getParentSymbol(symbol: ts.Symbol) {
+    // Please, note, this is dangerous trick. You can punch me, if that will go into npm.
     return (symbol as any)['parent'] as ts.Symbol | undefined;
 }
