@@ -4,6 +4,7 @@ import { ReactCallbackDependencies, gatherCallbackDependencies } from './gatherC
 import { getFullyQualifiedName } from '../common/getFullyQualifiedName';
 import { ReactComponentNode, ReactCallbackNode } from './types';
 import { getSymbolReferencesInFile } from '../common';
+import { isCallbackFactoryCall } from './isCallbackFactoryCall';
 
 type ReactCallbackDescription = {
     callback: ReactCallbackNode,
@@ -47,7 +48,17 @@ export function visitReactSFCComponent(
                         break;
                     }
 
+                    if (isCallbackFactoryCall(node, typeChecker)) {
+                        const dependencies = gatherCallbackDependencies(typeChecker, node, componentNode);
+                        callbacks.push({
+                            callback: node,
+                            replacement: generateReactUseCallback(node, dependencies),
+                            dependencies
+                        });
+                    }
+
                     ts.forEachChild(node, visitor);
+
                     break;
                 }
 

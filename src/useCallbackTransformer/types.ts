@@ -8,4 +8,5 @@ export type ReactComponentNode
 export type ReactCallbackNode
     = ts.ArrowFunction
     | ts.FunctionExpression
-    | ts.FunctionDeclaration;
+    | ts.FunctionDeclaration
+     | ts.CallExpression;
