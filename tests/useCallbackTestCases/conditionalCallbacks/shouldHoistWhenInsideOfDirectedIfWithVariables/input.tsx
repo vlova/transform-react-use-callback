@@ -4,13 +4,11 @@ export const ToggledComponent = (p: {
     show: true,
     message?: string
 }) => {
-    const $myHoistedCallback_1 = React.useCallback(
-        () => alert(p.message),
-        [p.message]);
-
     if (p.show) {
+        const message1 = p.message;
+        const message2 = message1 + ' hi';
         return (
-            <button onClick={$myHoistedCallback_1}>
+            <button onClick={() => alert(message2)}>
                 Say hi
             </button>
         )

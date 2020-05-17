@@ -5,11 +5,13 @@ import { getFullyQualifiedName } from '../common/getFullyQualifiedName';
 import { ReactComponentNode, ReactCallbackNode } from './types';
 import { getSymbolReferencesInFile } from '../common';
 import { isCallbackFactoryCall } from './isCallbackFactoryCall';
+import { hasShortReturn } from './hasShortReturn';
 
 type ReactCallbackDescription = {
     callback: ReactCallbackNode,
     replacement: ts.Node,
-    dependencies: ReactCallbackDependencies
+    dependencies: ReactCallbackDependencies,
+    isInConditionalContext: boolean
 }
 
 const denyWrappingIfDefinedIn = new Set([
@@ -17,9 +19,158 @@ const denyWrappingIfDefinedIn = new Set([
     "React.useMemo",
 ]);
 
+const conditionalTokens = new Set([
+    ts.SyntaxKind.AmpersandAmpersandToken, // &&
+    ts.SyntaxKind.QuestionQuestionToken, // ??
+    ts.SyntaxKind.BarBarToken // ||
+]);
+
 type ComponentTransformationResult = {
     componentNode: ReactComponentNode,
     variablesToHoistOutOfComponent: ts.VariableStatement[]
+}
+
+function gatherCallbacks(componentNode: ReactComponentNode, typeChecker: ts.TypeChecker): ReactCallbackDescription[] {
+    let isInConditionalContextCounter = 0;
+    const callbacks: ReactCallbackDescription[] = [];
+
+    function withConditionalContext(fn: () => void) {
+        isInConditionalContextCounter++;
+        try {
+            fn();
+        } finally {
+            isInConditionalContextCounter--;
+        }
+    }
+
+    function pushCallback(node: ReactCallbackNode) {
+        const dependencies = gatherCallbackDependencies(typeChecker, node, componentNode);
+        callbacks.push({
+            callback: node,
+            replacement: generateReactUseCallback(node, dependencies),
+            dependencies,
+            isInConditionalContext: isInConditionalContextCounter > 0
+        });
+    }
+
+    // TODO(perf): prevent digging into nodes that can't contain callback
+    function visit(node: ts.Node) {
+        switch (node.kind) {
+            // TODO: okay, but what if callback it's defined in variable & then used inside of React.useCallback?
+            // This is hard question especially because variable can be used twicely: one time without useCallback, second time with
+            case ts.SyntaxKind.CallExpression: {
+                assert(ts.isCallExpression(node));
+                const symbol = typeChecker.getSymbolAtLocation(node.expression);
+                const symbolName = getFullyQualifiedName(symbol);
+                if (symbolName != null && denyWrappingIfDefinedIn.has(symbolName)) {
+                    break;
+                }
+
+                if (isCallbackFactoryCall(node, typeChecker)) {
+                    pushCallback(node);
+                }
+
+                ts.forEachChild(node, visit);
+
+                break;
+            }
+
+            case ts.SyntaxKind.IfStatement: {
+                assert(ts.isIfStatement(node));
+                visit(node.expression);
+
+                withConditionalContext(() => {
+                    visit(node.thenStatement);
+                    if (node.elseStatement) {
+                        visit(node.elseStatement);
+                    }
+                });
+
+                break;
+            }
+
+            case ts.SyntaxKind.BinaryExpression: {
+                assert(ts.isBinaryExpression(node));
+
+                if (conditionalTokens.has(node.operatorToken.kind)) {
+                    visit(node.left);
+                    withConditionalContext(() => visit(node.right));
+                }
+
+                break;
+            }
+
+            // Ternary operator condition ? true : false
+            case ts.SyntaxKind.ConditionalExpression: {
+                assert(ts.isConditionalExpression(node));
+
+                visit(node.condition);
+                withConditionalContext(() => {
+                    visit(node.whenTrue);
+                    visit(node.whenFalse);
+                });
+
+                break;
+            }
+
+            case ts.SyntaxKind.ForStatement:
+            case ts.SyntaxKind.ForInStatement:
+            case ts.SyntaxKind.ForOfStatement:
+            case ts.SyntaxKind.WhileStatement:
+            case ts.SyntaxKind.DoStatement:
+            case ts.SyntaxKind.TryStatement:
+            case ts.SyntaxKind.LabeledStatement:
+            case ts.SyntaxKind.ContinueStatement:
+            case ts.SyntaxKind.BreakStatement:
+            case ts.SyntaxKind.ThrowStatement:
+            case ts.SyntaxKind.SwitchStatement: {
+                throw new Error('not implemented');
+            }
+
+            case ts.SyntaxKind.FunctionDeclaration:
+            case ts.SyntaxKind.FunctionExpression:
+            case ts.SyntaxKind.ArrowFunction: {
+                assert(
+                    ts.isArrowFunction(node) ||
+                    ts.isFunctionExpression(node) ||
+                    ts.isFunctionDeclaration(node)
+                );
+
+                pushCallback(node);
+
+                // It shouldn't dig into childs, because that can broke Block statement processing
+
+                break;
+            }
+
+            case ts.SyntaxKind.Block: {
+                assert(ts.isBlock(node));
+                let hasMeetShortReturn = false;
+                for (let statement of node.statements) {
+                    // Note that we are sure that it's short return of component level,
+                    //   because corresponding case for functions doesn't deeps into blocks
+                    hasMeetShortReturn = hasMeetShortReturn || hasShortReturn(statement);
+
+                    if (hasMeetShortReturn) {
+                        withConditionalContext(() => visit(statement));
+                    } else {
+                        visit(statement);
+                    }
+                }
+
+                break;
+            }
+
+            default: {
+                ts.forEachChild(node, visit);
+                break;
+            }
+        };
+
+    }
+
+    ts.forEachChild(componentNode, visit);
+    return callbacks;
 }
 
 // TODO: it should ensure that React is imported
@@ -32,67 +183,8 @@ export function visitReactSFCComponent(
     typeChecker: ts.TypeChecker,
     ctx: ts.TransformationContext
 ): ComponentTransformationResult {
-    function gatherCallbacks(componentNode: ReactComponentNode): ReactCallbackDescription[] {
-        const callbacks: ReactCallbackDescription[] = [];
-
-        // TODO(perf): prevent digging into nodes that can't contain callback
-        function visitor(node: ts.Node) {
-            switch (node.kind) {
-                // TODO: okay, but what if callback it's defined in variable & then used inside of React.useCallback?
-                // This is hard question especially because variable can be used twicely: one time without useCallback, second time with
-                case ts.SyntaxKind.CallExpression: {
-                    assert(ts.isCallExpression(node));
-                    const symbol = typeChecker.getSymbolAtLocation(node.expression);
-                    const symbolName = getFullyQualifiedName(symbol);
-                    if (symbolName != null && denyWrappingIfDefinedIn.has(symbolName)) {
-                        break;
-                    }
-
-                    if (isCallbackFactoryCall(node, typeChecker)) {
-                        const dependencies = gatherCallbackDependencies(typeChecker, node, componentNode);
-                        callbacks.push({
-                            callback: node,
-                            replacement: generateReactUseCallback(node, dependencies),
-                            dependencies
-                        });
-                    }
-
-                    ts.forEachChild(node, visitor);
-
-                    break;
-                }
-
-                case ts.SyntaxKind.FunctionDeclaration:
-                case ts.SyntaxKind.FunctionExpression:
-                case ts.SyntaxKind.ArrowFunction: {
-                    assert(
-                        ts.isArrowFunction(node) ||
-                        ts.isFunctionExpression(node) ||
-                        ts.isFunctionDeclaration(node)
-                    );
-                    const dependencies = gatherCallbackDependencies(typeChecker, node, componentNode);
-                    callbacks.push({
-                        callback: node,
-                        replacement: generateReactUseCallback(node, dependencies),
-                        dependencies
-                    });
-                    break;
-                }
-
-                default: {
-                    ts.forEachChild(node, visitor);
-                    break;
-                }
-            };
-
-        }
-
-        ts.forEachChild(componentNode, visitor);
-        return callbacks;
-    }
-
     function replaceCallbacks(componentNode: ReactComponentNode): ComponentTransformationResult {
-        const callbacks = gatherCallbacks(componentNode);
+        const callbacks = gatherCallbacks(componentNode, typeChecker);
         if (callbacks.length === 0) {
             return {
                 componentNode,
@@ -102,23 +194,25 @@ export function visitReactSFCComponent(
 
         const inlineReplacementMap = new Map<ts.Node, ts.Node | undefined>(
             callbacks
-                .filter(c => c.dependencies.length > 0)
+                .filter(c => c.dependencies.length > 0 && !c.isInConditionalContext)
                 .map(c => [c.callback, c.replacement]));
 
         const hoistOutOfComponentLevel = getCallbacksToHoistOutOfComponent(callbacks, typeChecker, componentNode);
+        const hoistInComponent = getCallbacksToHoistInComponent(callbacks);
+        const hoistAll = [...hoistOutOfComponentLevel, ...hoistInComponent];
 
-        for (const toHoist of hoistOutOfComponentLevel) {
+        for (const hoistDirective of hoistAll) {
             // TODO: consider using ctx.hoistVariableDeclaration + ctx.addInitializationStatement
             // when ctx.addInitializationStatement will be available for using
 
-            if (toHoist.type === 'hoistFunctionDeclaration') {
-                inlineReplacementMap.set(toHoist.callbackNode, undefined);
+            if (hoistDirective.type === 'hoistFunctionDeclaration') {
+                inlineReplacementMap.set(hoistDirective.callbackNode, undefined);
 
-                for (const reference of toHoist.references) {
-                    inlineReplacementMap.set(reference, toHoist.newVariableIdentifier);
+                for (const reference of hoistDirective.references) {
+                    inlineReplacementMap.set(reference, hoistDirective.newVariableIdentifier);
                 }
             } else {
-                inlineReplacementMap.set(toHoist.callbackNode, toHoist.newVariableIdentifier);
+                inlineReplacementMap.set(hoistDirective.callbackNode, hoistDirective.newVariableIdentifier);
             }
         }
 
@@ -131,7 +225,11 @@ export function visitReactSFCComponent(
             return ts.visitEachChild(node, visitor, ctx);
         }
 
-        const newComponentNode = ts.visitEachChild(componentNode, visitor, ctx);
+        const newComponentNode = injectHoistedVariablesIntoComponent(
+            ts.visitEachChild(componentNode, visitor, ctx),
+            hoistInComponent,
+            ctx);
+
         return {
             componentNode: newComponentNode,
             variablesToHoistOutOfComponent: hoistOutOfComponentLevel.map(h => h.variableStatement)
@@ -139,6 +237,47 @@ export function visitReactSFCComponent(
     }
 
     return replaceCallbacks(componentNode);
+}
+
+function injectHoistedVariablesIntoComponent(
+    componentNode: ReactComponentNode,
+    hoist: ReactCallbackHoistDirective[],
+    ctx: ts.TransformationContext): ReactComponentNode {
+    if (hoist.length === 0) {
+        return componentNode;
+    }
+
+    assert(componentNode.body != null);
+    let statements = [...bodyToStatementList(componentNode.body)];
+    const insertVariableBeforeKinds = new Set([
+        ts.SyntaxKind.IfStatement,
+        ts.SyntaxKind.SwitchStatement,
+        ts.SyntaxKind.ReturnStatement
+    ]);
+    const stopIndex = statements.findIndex(s => insertVariableBeforeKinds.has(s.kind));
+    const indexToInsert = stopIndex === -1
+        ? 0
+        : stopIndex;
+
+    statements.splice(indexToInsert, 0, ...hoist.map(p => p.variableStatement as ts.Statement));
+
+    const newBody = ts.isBlock(componentNode.body)
+        ? ts.updateBlock(componentNode.body, statements)
+        : ts.createBlock(statements, true);
+
+    return ts.visitEachChild(componentNode, node => {
+        if (node === componentNode.body) {
+            return newBody;
+        } else {
+            return node;
+        }
+    }, ctx)
+}
+
+function bodyToStatementList(body: ts.ConciseBody) {
+    return ts.isBlock(body)
+        ? body.statements
+        : [ts.createReturn(body)];
 }
 
 function generateReactUseCallback(
@@ -218,10 +357,18 @@ function getCallbacksToHoistOutOfComponent(
 ): ReactCallbackHoistDirective[] {
     return callbacks
         .filter(c => c.dependencies.length === 0)
-        .map(callback => convertCallbackToHoistDirective(callback, typeChecker, componentNode));
+        .map(callback => convertZeroDepsCallbackToHoistDirective(callback, typeChecker, componentNode));
 }
 
-function convertCallbackToHoistDirective(
+function getCallbacksToHoistInComponent(
+    callbacks: ReactCallbackDescription[]
+): ReactCallbackHoistDirective[] {
+    return callbacks
+        .filter(c => c.dependencies.length > 0 && c.isInConditionalContext)
+        .map(callback => convertMultiDepsCallbackToHoistDirective(callback));
+}
+
+function convertZeroDepsCallbackToHoistDirective(
     callback: ReactCallbackDescription,
     typeChecker: ts.TypeChecker,
     componentNode: ReactComponentNode
@@ -258,4 +405,24 @@ function convertCallbackToHoistDirective(
             variableStatement: variableStatement
         };
     }
+}
+
+function convertMultiDepsCallbackToHoistDirective(
+    callback: ReactCallbackDescription
+): ReactCallbackHoistDirective {
+    assert(!ts.isFunctionDeclaration(callback.callback)); // TODO; this should be checked, not sure about it
+
+    const newVariableIdentifier = ts.createUniqueName("$myHoistedCallback");
+    const variableStatement = ts.createVariableStatement(undefined,
+        ts.createVariableDeclarationList([
+            ts.createVariableDeclaration(newVariableIdentifier, undefined,
+                callback.replacement as ts.Expression)
+        ], ts.NodeFlags.Const));
+
+    return {
+        type: 'hoistFunctionExpression',
+        callbackNode: callback.callback,
+        newVariableIdentifier,
+        variableStatement: variableStatement
+    };
 }

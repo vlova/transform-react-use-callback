@@ -5,7 +5,11 @@ export const ToggledComponent = (p: {
     message?: string
 }) => {
     const $myHoistedCallback_1 = React.useCallback(
-        () => alert(p.message),
+        () => {
+            const message1 = p.message;
+            const message2 = message1 + ' hi';
+            alert(message2);
+        },
         [p.message]);
 
     if (p.show) {
