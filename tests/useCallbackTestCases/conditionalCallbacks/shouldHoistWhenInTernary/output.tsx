@@ -1,13 +1,11 @@
 import * as React from 'react';
 
-export const ToggledComponent = (p: { show: boolean }) => {
+export const ToggledComponent = (p: ShowProps) => {
     const $myHoistedCallback0 = React.useCallback(
         () => {
-            if (p.show) {
-                alert('Hi');
-            }
+            alert((p as any).message);
         },
-        [p.show]);
+        [(p as any).message]);
 
 
     return p.show
@@ -17,4 +15,11 @@ export const ToggledComponent = (p: { show: boolean }) => {
             </button>
         )
         : <></>;
+}
+
+type ShowProps = {
+    show: true,
+    message: string
+} | {
+    show: false
 }
