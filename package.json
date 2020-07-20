@@ -11,7 +11,7 @@
   "dependencies": {
     "@ts-morph/bootstrap": "0.3.0",
     "@types/lodash": "^4.14.150",
-    "lodash": "^4.17.15",
+    "lodash": "^4.17.19",
     "ts-essentials": "^6.0.4",
     "typescript": "3.7.3"
   },
